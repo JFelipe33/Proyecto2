@@ -1,0 +1,33 @@
+/* Nucleo L476RG overlay para sensor inductivo LJ12A3, servo SG90 y motor L298N */
+
+/* Habilitar GPIO Port A para el sensor e IN de motor */
+&gpioa {
+    status = "okay";
+};
+
+/* Habilitar GPIO Port B para el servo e IN de motor */
+&gpiob {
+    status = "okay";
+};
+
+/* Configuración de PWM3 (TIM3) para el servo SG90 (Pin PB4) */
+&timers3 {
+    status = "okay";
+
+    pwm3: pwm {
+        status = "okay";
+        pinctrl-0 = <&tim3_ch1_pb4>;
+        pinctrl-names = "default";
+    };
+};
+
+/* Restaurando configuración de PWM2 (TIM2) para motor L298H ENA en el pin PA0 */
+&timers2 {
+    status = "okay";
+
+    pwm2: pwm {
+        status = "okay";
+        pinctrl-0 = <&tim2_ch1_pa0>;
+        pinctrl-names = "default";
+    };
+};
