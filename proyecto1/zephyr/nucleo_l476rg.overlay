@@ -1,0 +1,32 @@
+/ {
+    aliases {
+        banda-motor-pwm = &pwm2;
+        banda-servo-pwm = &pwm3;
+    };
+};
+
+&gpioa {
+    status = "okay";
+};
+
+&gpiob {
+    status = "okay";
+};
+
+&timers3 {
+    status = "okay";
+    pwm3: pwm {
+        status = "okay";
+        pinctrl-0 = <&tim3_ch1_pb4>;
+        pinctrl-names = "default";
+    };
+};
+
+&timers2 {
+    status = "okay";
+    pwm2: pwm {
+        status = "okay";
+        pinctrl-0 = <&tim2_ch1_pa0>;
+        pinctrl-names = "default";
+    };
+};

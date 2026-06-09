@@ -1,0 +1,419 @@
+\documentclass[12pt, letterpaper]{article}
+
+% ====================================================================
+% PAQUETES BÁSICOS Y CONFIGURACIÓN DEL IDIOMA
+% ====================================================================
+
+\usepackage[spanish,es-tabla]{babel} % Configura el documento en español y usa "Tabla" en vez de "Cuadro"
+\usepackage{float} % Para el especificador [H]
+\usepackage[utf8]{inputenc}   % Permite escribir acentos y eñes directamente
+\usepackage[margin=2.5cm]{geometry} % Fija los márgenes de las páginas a 2,5 cm
+\usepackage{graphicx}         % Permite insertar imágenes y diagramas
+\usepackage{booktabs}         % Para hacer tablas limpias y profesionales
+\usepackage{tabularx}
+\usepackage{amsmath, amssymb} % Paquetes matemáticos estándar
+\usepackage{microtype}        % Mejoras en la tipografía general y espaciado
+\usepackage{hyperref}         % Crea enlaces clicables en el índice
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,      
+    urlcolor=cyan,
+    pdftitle={Proyecto Banda Transportadora Desviadora de Metales},
+}
+
+% ====================================================================
+% DATOS DE LA PORTADA
+% ====================================================================
+\title{
+    \vspace{2cm}
+    \Huge \textsf{\textbf{Banda Transportadora Desviadora de Metales}} \\
+    \vspace{1cm}
+    \large Materia: Estructuras Computacionales \\
+    \vspace{2cm}
+}
+
+\author{
+    \textbf{Juan Felipe Pachón Restrepo} \\
+    \textbf{C.C. 1054542918} \\
+    \vspace{1.5cm} \\
+    Profesor: \\
+    \textbf{Gustavo Adolfo Osorio Londoño}
+}
+
+\date{
+    \vfill
+    Universidad Nacional de Colombia \\
+    Sede Manizales \\
+    Campus La Nubia
+}
+
+% ====================================================================
+% CUERPO DEL DOCUMENTO
+% ====================================================================
+\begin{document}
+
+% 1. Generación automática de la portada
+\maketitle
+\thispagestyle{empty} % Quita el número de página en la portada
+\clearpage
+
+% 2. Índice automático del reporte
+\tableofcontents
+\clearpage
+
+\section{Proyecto / Problema / Sistema}
+\label{sec:proyecto_problema_sistema}
+
+El sistema recibe información desde un sensor inductivo encargado de detectar piezas metálicas y desde un botón de usuario configurado para identificar múltiples pulsaciones o presiones prolongadas. Estos datos son procesados por una máquina de estados optimizada mediante tablas indexadas que se ejecuta de forma asíncrona sobre un sistema operativo en tiempo real, generando una respuesta observable en el motor de tracción de la banda, la posición angular de un servomotor de desvío y un indicador LED de estado. Toda la actividad interna es reportada bajo un esquema no bloqueante hacia una consola de diagnóstico.
+
+El prototipo interactúa directamente con su entorno físico al identificar materiales ferrosos sobre la cinta transportadora en movimiento y sin necesidad de contacto directo. Al ocurrir una detección, el brazo deflector altera la trayectoria del objeto para retirarlo de la línea antes de regresar a su posición inicial de reposo. Asimismo, el operador puede intervenir en la marcha del sistema mediante el botón de control para encender la banda, cambiar su velocidad de manera inmediata, apagarla o activar una detención de emergencia total si es necesario. Todo el comportamiento del problema se define bajo un enfoque puramente funcional y de control con el entorno, prescindiendo del uso de nombres de pines, líneas de código o librerías de software específicas en esta sección introductoria.
+
+\clearpage
+
+\section{Entradas, Salidas y Eventos}
+\label{sec:entradas_salidas_eventos}
+
+En esta sección se organizan los componentes de hardware que actúan como periféricos de entrada y salida, así como los eventos lógicos que gobiernan el firmware.
+
+\begin{table}[H]
+\centering
+\small
+\renewcommand{\arraystretch}{1.1}
+\caption{Clasificación de entradas, salidas y eventos del sistema.}
+\label{tab:entradas_salidas_eventos}
+\vspace{0.3cm}
+\begin{tabularx}{\textwidth}{lXX}
+\toprule
+\textbf{Elemento} & \textbf{Descripción en el Prototipo} & \textbf{Tipo de Señal / Conexión} \\
+\midrule
+Entrada 1         & Sensor inductivo de metales LJ12A3 & Digital (Configurado con interrupción y enlace de contexto) \\
+Entrada 2         & Botón de usuario integrado (PC13) & Digital (Detección de ambos flancos de conmutación) \\
+\midrule
+Salida 1          & Control de velocidad del motor & Modulación por ancho de pulso (PWM) \\
+Salida 2          & Control de posición del brazo (Servo) & Modulación por ancho de pulso (PWM) \\
+Salida 3a         & Dirección del motor - Línea IN1 del puente H & Digital de salida \\
+Salida 3b         & Dirección del motor - Línea IN2 del puente H & Digital de salida \\
+Salida 4          & LED indicador de estado (PA5) & Digital de salida \\
+\midrule
+Evento 1          & Pulsación única o doble en el botón & Entrada por interrupción para control de marcha \\
+Evento 2          & Presión prolongada del botón (2 segundos) & Disparo inmediato de la parada de emergencia \\
+Evento 3          & Pulsación del botón estando en emergencia & Evento de desbloqueo del sistema \\
+Evento 4          & Detección de material metálico en la cinta & Entrada asíncrona (Lectura de 0V en el pin) \\
+Evento 5          & Fin del tiempo de retención del brazo & Temporizador controlado por el kernel \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Requerimientos y Validación}
+\label{sec:requerimientos_preliminares}
+
+A continuación se detallan las especificaciones obligatorias del diseño. Cada requerimiento se define de forma observable y verificable, vinculándose directamente con un criterio explícito para su validación.
+
+\subsection{REQ-01: Gestión de Concurrencia y Seguridad de Memoria}
+El sistema debe administrar la lógica de control, la lectura de sensores y la actualización de actuadores utilizando las herramientas de hilos y tareas del sistema operativo en tiempo real, garantizando la integridad de los datos compartidos.
+
+\vspace{0.5cm}
+
+\noindent \textbf{Criterio de aceptación:} \\
+Se considera cumplido si la máquina de estados procesa los eventos mediante colas de trabajo e hilos independientes, utilizando operaciones atómicas nativas del procesador para la cuenta de clics, evitando condiciones de carrera e hilos bloqueantes.
+
+\subsection{REQ-02: Respuesta Asíncrona y Registro Diferido}
+El firmware debe reaccionar de manera inmediata ante los estímulos externos provocados por el botón de control o el sensor de metales, y documentar el diagnóstico de forma eficiente.
+
+\vspace{0.5cm}
+
+\noindent \textbf{Criterio de aceptación:} \\
+Se considera cumplido si el cambio eléctrico en los pines dispara una rutina de servicio de interrupción (ISR) y el registro de información en consola se realiza de manera diferida sin perturbar el comportamiento de tiempo real.
+
+\subsection{REQ-03: Control de Velocidad por Pasos}
+El motor de tracción debe iniciar completamente detenido y aumentar su velocidad de forma progresiva en 4 pasos fijos controlados mediante el botón de usuario.
+
+\vspace{0.5cm}
+
+\noindent \textbf{Criterio de aceptación:} \\
+Se considera cumplido si el valor inicial de software del $60\%$ se traduce en un estado de reposo ($0\%$ de movimiento real en la banda) y cada pulsación única incrementa el ciclo de trabajo en pasos del $10\%$ hasta alcanzar el máximo ($100\%$) en el cuarto paso.
+
+\subsection{REQ-04: Activación del Brazo Clasificador}
+El servomotor encargado del desvío de piezas debe activarse únicamente cuando el sensor inductivo confirme la presencia física de material metálico en la banda.
+
+\vspace{0.5cm}
+
+\noindent \textbf{Criterio de aceptación:} \\
+Se considera cumplido si el brazo deflector cambia de su ángulo de reposo al de expulsión si y solo si la máquina de estados procesa el evento de detección de metal y el sistema no se encuentra apagado.
+
+\subsection{REQ-05: Temporización del Rechazo}
+El brazo mecánico debe permanecer extendido el tiempo necesario para asegurar que el objeto sea retirado por completo de la trayectoria de la banda antes de regresar a la posición inicial.
+
+\vspace{0.5cm}
+
+\noindent \textbf{Criterio de aceptación:} \\
+Se considera cumplido si el temporizador del kernel retiene el servomotor en la posición de desvío durante exactamente 4,0 segundos antes de ordenar automáticamente su retorno.
+
+\subsection{REQ-06: Inicialización Segura}
+Al energizarse o reiniciarse la tarjeta de desarrollo, el sistema debe iniciar obligatoriamente en una condición segura y pasiva para evitar movimientos accidentales.
+
+\vspace{0.5cm}
+
+\noindent \textbf{Criterio de aceptación:} \\
+Se considera cumplido si al arrancar el microcontrolador el motor se configura en un $0\%$ de marcha real, el servo se posiciona de forma síncrona en resguardo ($0^\circ$) y la FSM se sitúa firmemente en el estado de apagado.
+
+\subsection{REQ-07: Protección del Puente H}
+El código de control del motor debe impedir cualquier combinación lógica de salida que ponga en riesgo la integridad física de la etapa de potencia.
+
+\vspace{0.5cm}
+
+\noindent \textbf{Criterio de aceptación:} \\
+Se considera cumplido si las funciones de la API aseguran que las líneas digitales de dirección IN1 e IN2 nunca compartan un valor lógico alto (1) de forma simultánea bajo ninguna circunstancia.
+
+\subsection{REQ-08: Parada de Emergencia Absoluta}
+El sistema debe contar con un mecanismo de interrupción drástica que detenga de inmediato toda actividad física ante condiciones imprevistas.
+
+\vspace{0.5cm}
+
+\noindent \textbf{Criterio de aceptación:} \\
+Se considera cumplido si mantener presionado el botón por 2,0 segundos apaga el motor, retorna el servo a posición base de manera inmediata y bloquea cualquier nueva detección del sensor mediante un filtro absoluto en la entrada.
+
+\section{Estados del Sistema}
+\label{sec:estados_preliminares}
+
+El comportamiento secuencial del programa se organiza a través de cuatro estados lógicos principales. Cada uno se ejecuta de forma independiente mediante funciones dedicadas vinculadas a una tabla indexada:
+
+\begin{itemize}
+    \item \textbf{\texttt{STATE\_SYSTEM\_OFF}:} Estado inicial de seguridad. La banda transportadora permanece detenida (el ciclo de trabajo PWM está configurado en su límite mínimo del $60\%$, lo que equivale al $0\%$ de movimiento real) y el servomotor se encuentra firmemente asegurado en su ángulo de reposo mediante una aduana de software que anula lecturas tardías del sensor.
+    \item \textbf{\texttt{STATE\_BANDA\_RUNNING}:} Estado de operación normal. El motor de tracción desplaza la cinta de manera continua a la velocidad seleccionada por el usuario (ajustable en pasos del $10\%$), mientras el brazo se mantiene estático a la espera de metal.
+    \item \textbf{\texttt{STATE\_METAL\_REJECT}:} Estado de seguridad y desvío. Se activa al instante cuando el sensor detecta una pieza metálica. El servomotor se extiende a $60^\circ$ para retirar el objeto de la pista durante un tiempo fijo de 4,0 segundos antes de restaurar la marcha normal.
+    \item \textbf{\texttt{STATE\_EMERGENCY\_STOP}:} Estado de bloqueo crítico. Detiene por completo la potencia del motor, devuelve el servo a la posición base y activa un parpadeo visual rápido en el LED de estado ($100\,$ms). En este estado, el sensor inductivo queda completamente sordo por software. Un toque simple en el botón desbloquea este estado, enviando el sistema directamente a la marcha operativa mínima.
+\end{itemize}
+
+\section{Eventos del Programa}
+\label{sec:eventos_preliminares}
+
+Los eventos definidos en el firmware controlan las transiciones de la máquina de estados a través de llamadas de despacho con eficiencia en tiempo constante $O(1)$:
+
+\begin{itemize}
+    \item \textbf{\texttt{EVENT\_CLICK\_INCREMENT}:} Se genera al detectar un único clic válido en el botón dentro de la ventana de tiempo. Si el sistema está apagado, cambia al estado de marcha. Si la banda ya está corriendo, incrementa la velocidad del motor.
+    
+    \item \textbf{\texttt{EVENT\_CLICK\_DECREMENT}:} Se genera al registrarse un doble clic válido dentro de la ventana de tiempo. Provoca una reducción progresiva de la velocidad del motor en pasos del $10\%$. Si el sistema ya se encuentra en su velocidad mínima operativa ($70\%$), este evento disminuye el valor al $60\%$, lo que apaga físicamente el motor de tracción, cancela los temporizadores activos del brazo y regresa de forma segura al estado \texttt{STATE\_SYSTEM\_OFF}.
+    
+    \item \textbf{\texttt{EVENT\_BUTTON\_PRESSED}:} Se dispara al instante en que el usuario presiona el botón físico. Actúa como señal de entrada primaria para evaluar tiempos prolongados o como la señal de desbloqueo inmediato cuando el sistema está en emergencia, forzando la transición directa hacia el estado de marcha con velocidad mínima.
+    
+    \item \textbf{\texttt{EVENT\_EMERGENCY}:} Se gatilla tras mantener presionado el botón de usuario de manera continua por 2000\,ms, forzando al sistema a entrar en la rutina de bloqueo de seguridad.
+    
+    \item \textbf{\texttt{EVENT\_METAL\_DETECTED}:} Se dispara de forma asíncrona mediante la interrupción del sensor inductivo al detectar metal. Fuerza la transición inmediata hacia el estado \texttt{STATE\_METAL\_REJECT}.
+    
+    \item \textbf{\texttt{EVENT\_TIMEOUT}:} Generado automáticamente por el sistema operativo al concluir el periodo de retención de 4000\,ms. Restaura el servo a su posición inicial y regresa la FSM al estado de marcha regular.
+\end{itemize}
+
+\clearpage
+
+\section{Diagrama Máquina de Estados del Sistema}
+\label{sec:diagrama_fsm}
+
+En esta sección se presenta la Máquina de Estados Finita (FSM) que reacciona de manera inmediata a los eventos del usuario.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{maquina.png}
+    \caption{Diagrama de la máquina de estados finita (FSM)}
+    \label{fig:maquina_estados}
+\end{figure}
+
+\section{Hardware y Materiales Disponibles}
+\label{sec:hardware_materiales}
+
+A continuación se presenta el inventory consolidado de los componentes utilizados en la implementación del prototipo:
+
+\vspace{0.3cm}
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.2}
+\caption{Componentes de hardware utilizados en el proyecto.}
+\label{tab:hardware_materiales}
+\vspace{0.3cm}
+\begin{tabularx}{\textwidth}{lX}
+\toprule
+\textbf{Elemento} & \textbf{Función y Observaciones dentro del Diseño} \\
+\midrule
+STM32L4 / NUCLEO-L476RG & Tarjeta de desarrollo principal encargada de ejecutar el firmware en Zephyr RTOS. \\
+\midrule
+Sensor Inductivo LJ12A3 & Sensor industrial de tipo NPN colector abierto, configurado con resistencia de pull-up. \\
+\midrule
+Puente H L298N & Módulo de potencia empleado para controlar la velocidad (PWM) y sentido del motor DC. \\
+\midrule
+Servomotor SG90 & Actuador de posición controlado por PWM (50\,Hz) para mover el brazo deflector. \\
+\midrule
+Chasis y Banda Transportadora & Mecanismo físico de desplazamiento acoplado al motor de tracción continua. \\
+\midrule
+Fuente de Alimentación Externa & Suministro eléctrico independiente de 12v. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\clearpage
+
+\section{Pines y Periféricos de Conexión}
+\label{sec:pines_perifericos_tentativos}
+
+Asignación física y distribución de señales sobre los pines del microcontrolador de la placa Nucleo-L476RG:
+
+\vspace{0.3cm}
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.2}
+\caption{Distribución de pines y periféricos de hardware.}
+\label{tab:pines_perifericos}
+\vspace{0.3cm}
+\begin{tabularx}{\textwidth}{lXXX}
+\toprule
+\textbf{Señal de Control} & \textbf{Pin Nucleo} & \textbf{Periférico Interno} & \textbf{Aplicación en el Sistema} \\
+\midrule
+\texttt{ENA (PWM\_MOTOR)} & PA0 & TIM2 (CH1) & Modulación PWM de la velocidad de la banda (10\,kHz). \\
+\midrule
+\texttt{IN1 (DIR\_MOTOR\_1)} & PB0 & GPIO & Señal digital de salida para dirección del motor DC. \\
+\midrule
+\texttt{IN2 (DIR\_MOTOR\_2)} & PB3 & GPIO & Señal digital de salida para dirección del motor DC. \\
+\midrule
+\texttt{PWM\_SERVO} & PB4 & TIM3 (CH1) & Control de posición angular para el servo SG90 (50\,Hz). \\
+\midrule
+\texttt{SENSOR\_IN} & PA1 & GPIO & Entrada digital con interrupción por flanco de bajada. \\
+\midrule
+\texttt{BUTTON\_USER} & PC13 & GPIO & Botón azul de la placa integrado para la captura de clics. \\
+\midrule
+\texttt{LED\_USER} & PA5 & GPIO & LED verde integrado para indicación visual de los estados. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\clearpage
+
+\section{Arquitectura Modular del Software}
+\label{sec:arquitectura_software}
+
+El firmware está estructurado de forma modular bajo un enfoque orientado a objetos mediante el aislamiento de contextos, encapsulando las variables en estructuras reentrantes:
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.2}
+\caption{Estructura de archivos de código y responsabilidades.}
+\label{tab:arquitectura_software}
+\vspace{0.3cm}
+\begin{tabularx}{\textwidth}{lXX}
+\toprule
+\textbf{Módulo / Archivo} & \textbf{Responsabilidad Técnica} & \textbf{Vínculo con el Sistema} \\
+\midrule
+\texttt{main.c / .h} & Inicialización de periféricos base, enlace asíncrono del botón e instanciación local aislada del contexto de la banda. & Punto de entrada del firmware; delega de forma segura el control a la instancia de la FSM. \\
+\midrule
+\texttt{app\_fsm.c / .h} & Implementación de la FSM mediante tablas indexadas de punteros a funciones, conteo atómico de clics y puente de contexto privado para sensores. & Núcleo del firmware; procesa eventos de forma thread-safe y gobierna las llamadas de hardware. \\
+\midrule
+\texttt{lj12a3\_api.c / .h} & Configuración y lectura del sensor inductivo mediante rutinas de interrupción y funciones lógicas de habilitación. & Notifica de forma asíncrona los eventos de detección metálica bajo permiso de la FSM. \\
+\midrule
+\texttt{sg90\_api.c / .h} & Controlador PWM para el servomotor. Realiza el cálculo del ancho de pulso angular. & Modifica la posición del brazo extractor ante comandos de la FSM. \\
+\midrule
+\texttt{l298h\_api.c / .h} & Controlador del Puente H. Gestiona pines de dirección y ciclo de trabajo del motor de tracción. & Modifica la velocidad y parada de la banda transportadora. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Drivers y Servicios del Sistema Operativo}
+\label{sec:drivers_servicios}
+
+A continuación se detallan los servicios nativos del kernel de Zephyr RTOS implementados para dar solución al firmware de la banda transportadora:
+
+\subsection{GPIO (General Purpose Input/Output)}
+Gestiona las líneas digitales básicas del microcontrolador. Controla los niveles lógicos de dirección del puente H (IN1 e IN2) y el encendido o apagado del LED de estado.
+
+\subsection{GPIO callback / interrupción}
+Administra las interrupciones físicas por hardware. Permite responder ante los flancos del botón o los flancos de bajada provocados por el sensor inductivo al detectar objetos metálicos, eliminando las lecturas cíclicas por software.
+
+\subsection{PWM (Pulse Width Modulation)}
+Genera señales periódicas de temporización. Se aplica en el motor para modular el ciclo de trabajo de la velocidad y en el servomotor para definir su posición angular exacta a una frecuencia fija de $50\,$Hz.
+
+\subsection{k\_timer / k\_work (Temporizadores y colas de trabajo)}
+Planifica tareas diferidas sin bloquear el procesamiento principal. Controla los 4,0 segundos de retención del brazo deflector, mitiga el ruido eléctrico del botón de forma asíncrona por flanco de cola y gestiona el parpadeo del LED.
+
+\subsection{threads (Hilos de ejecución)}
+Permite la ejecución concurrente bajo el esquema multitarea de Zephyr. Crea un hilo cooperativo independiente exclusivo para el administrador del motor, aislando las actualizaciones de hardware de la máquina de estados.
+
+\subsection{k\_sem (Semáforos)}
+Herramienta de sincronización entre tareas. Mantiene en estado de espera eficiente al hilo encargado del motor, despertándolo de manera inmediata únicamente cuando ocurre un cambio real en la velocidad del sistema.
+
+\subsection{sys/atomic.h (Operaciones Atómicas)}
+Reemplaza el uso de la directiva tradicional \texttt{volatile} por operaciones atómicas nativas del procesador. Garantiza que los incrementos y lecturas del contador de clics se ejecuten de forma segura e indivisible, previniendo condiciones de carrera frente a la concurrencia.
+
+\subsection{Logging (Subsistema de Bitácoras)}
+Servicio de mensajería asíncrona estructurada. Configurado en modo diferido (\textit{deferred mode}), procesa y almacena los mensajes de diagnóstico en un búfer intermedio, transmitiéndolos hacia el exterior únicamente cuando la CPU se encuentra libre de tareas prioritarias de control.
+
+\section{Evidencia de Validación y Pruebas}
+\label{sec:evidencia_validacion}
+
+A continuación se presenta el plan de pruebas sistemático diseñado para verificar el correcto funcionamiento del prototipo bajo una estrategia de integración incremental.
+
+\subsection{TEST-01: Prueba independiente del servomotor}
+Verifica la correcta respuesta del actuador de desvío de forma totalmente aislada de los estímulos externos.
+
+\vspace{0.5cm}
+
+\noindent \textbf{Procedimiento del ensayo:} \\
+Invocación directa de la función de control, forzando al servomotor a cambiar su posición angular de forma repetitiva entre los $0^\circ$ y los $60^\circ$.
+
+\vspace{0.5cm}
+
+\noindent \textbf{Resultado esperado:} \\
+El brazo debe desplazarse de manera uniforme. Mediante un osciloscopio se verifica que la señal PWM generada mantenga la frecuencia fija de $50\,$Hz y los anchos de pulso correctos.
+
+\subsection{TEST-02: Prueba de servomotor con sensor inductivo}
+Introduce la primera línea de entrada asíncrona para evaluar el lazo cerrado de detección física.
+
+\vspace{0.5cm}
+
+\noindent \textbf{Procedimiento del ensayo:} \\
+Con la banda detenida, se acerca manualmente un material ferroso a la zona de detección del sensor inductivo LJ12A3 para observar la reacción inmediata del brazo mecánico.
+
+\vspace{0.5cm}
+
+\noindent \textbf{Resultado esperado:} \\
+El sensor debe conmutar su salida a 0V, disparando la ISR por hardware. La interrupción debe usar el canal de contexto asignado para despachar el evento y extender de forma inmediata el servomotor a la posición de desvío.
+
+\subsection{TEST-03: Prueba de servomotor con sensor y motor en marcha}
+Se integran los dos actuadores principales junto al sensor industrial para evaluar el comportamiento dinámico del flujo de materiales.
+
+\vspace{0.5cm}
+
+\noindent \textbf{Procedimiento del ensayo:} \\
+Se activa la marcha del motor de tracción continua a través del puente H. Posteriormente, se deja rodar una pieza metálica sobre la línea para que pase por el frente del área de lectura del sensor.
+
+\vspace{0.5cm}
+
+\noindent \textbf{Resultado esperado:} \\
+La banda debe avanzar suavemente. Al cruzar el sensor, el brazo tiene que extenderse, retener su posición durante los 4,0 segundos programados en el kernel y luego regresar automáticamente a su posición base.
+
+\subsection{TEST-04: Implementación de botón de usuario y LED de estado con el sistema operativo}
+Se integra la interfaz de control del operador junto con el conjunto de hardware validado en los ensayos anteriores.
+
+\vspace{0.5cm}
+
+\noindent \textbf{Procedimiento del ensayo:} \\
+Se presiona el botón físico PC13 para encender el sistema y se ejecutan pulsaciones para verificar los ciclos de marcha. Se observa de forma simultánea que el LED responda visualmente y que el puente H altere la velocidad del motor.
+
+\vspace{0.5cm}
+
+\noindent \textbf{Resultado esperado:} \\
+El sistema debe realizar de forma correcta el control del motor de manera coordinada. El LED verde integrado (PA5) debe encenderse al instante con cada clic como confirmación visual. Al detener la banda, el motor se apaga, el LED se desactiva y el servo queda resguardado en su posición base.
+
+\subsection{TEST-05: Implementación final combinando todo el sistema y monitoreo serie}
+La última etapa evalúa el prototipo en su totalidad, verificando la interacción simultánea de todos los módulos, la seguridad de la FSM y la salida de diagnóstico.
+
+\vspace{0.5cm}
+
+\noindent \textbf{Procedimiento del ensayo:} \\
+Se pone en marcha el prototipo completo interactuando con el botón para variar la velocidad en sus 4 pasos fijos, dejando pasar múltiples piezas y provocando una condición de riesgo sostenida por 2,0 segundos. Se acopla la computadora al canal USB de la placa abriendo el Monitor Serie de PlatformIO a una velocidad de 115200 baudios.
+
+\vspace{0.5cm}
+
+\noindent \textbf{Resultado esperado:} \\
+El motor de la banda debe responder con agilidad a cada clic regulado atómicamente en pasos del $10\%$. Al activar la parada de emergencia, la cinta se detiene a cero de forma instantánea y el terminal serie muestra la bitácora coloreada en rojo \texttt{[ALERTA INDUSTRIAL] Parada de emergencia}. Al pulsar nuevamente el botón para salir de la emergencia, el sistema salta al estado de marcha activa a la velocidad mínima operativa ($70\%$), imprimiendo de forma diferida el estatus limpio en la consola.
+
+\end{document}
