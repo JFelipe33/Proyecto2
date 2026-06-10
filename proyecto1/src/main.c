@@ -7,6 +7,7 @@
 #include <zephyr/device.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/logging/log.h>
+#include <errno.h>
 #include "main.h"
 
 /* Registro del canal de diagnóstico exclusivo para el hilo principal de arranque */
@@ -30,8 +31,11 @@ static const LJ12A3_Sensor_t metal_sensor = {
     .gpio_spec = { .port = DEVICE_DT_GET(DT_NODELABEL(gpioa)), .pin = 1, .dt_flags = GPIO_ACTIVE_HIGH | GPIO_PULL_UP }
 };
 
-/* Instancia de contexto aislada y protegida para el control de esta banda transportadora */
+/* Instancia de contexto aislada para el control lógico de la banda transportadora */
 static app_fsm_t banda_transportadora_fsm;
+
+/* INTEGRADO: Instancia reentrante para el control del decodificador del botón */
+static button_handler_t user_button_handler;
 
 /* Estructura para registrar el enlace de la interrupción física del botón */
 static struct gpio_callback button_cb_data;
@@ -40,28 +44,37 @@ static struct gpio_callback button_cb_data;
 static struct k_work_delayable button_debounce_work;
 
 /**
+ * @brief Callback intermedio (Inversión de Control).
+ * Se dispara cuando el módulo button_api detecta un evento lógico válido.
+ */
+static void on_button_event_received(void *context, uint32_t event_id)
+{
+    /* Redirección directa y segura del evento hacia el despachador de la FSM */
+    app_fsm_dispatch((app_fsm_t *)context, (system_event_t)event_id);
+}
+
+/**
  * @brief Manejador de trabajo diferido para el antirebote del botón.
  */
 static void button_debounce_handler(struct k_work *work)
 {
-    /* Evitamos advertencias del compilador indicando que el argumento 'work' no se procesará directamente */
     ARG_UNUSED(work);
     
     /* Lectura del estado eléctrico estable del pin (1 = Presionado, 0 = Liberado) */
     bool is_pressed = (gpio_pin_get_dt(&user_button) == 1); 
     
-    /* Envío del estado limpio a la instancia específica de nuestra máquina de estados */
-    app_fsm_notify_button_state(&banda_transportadora_fsm, is_pressed);                
+    /* INTEGRADO: Se reporta al button_api para su procesamiento de clics y tiempos */
+    button_api_notify_state(&user_button_handler, is_pressed);                
 }
 
 /**
- * @brief Rutina de Servicio de Interrupción (ISR) del Botón de Usuario.
+ * @brief Rutina de Servicio de Interrupción (ISR) de la patilla del Botón.
  */
 static void button_pressed_callback(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
     ARG_UNUSED(dev); ARG_UNUSED(cb); ARG_UNUSED(pins);
     
-    /* Reprogramación asíncrona del temporizador para evadir el ruido metálico */
+    /* Reprogramación asíncrona del temporizador para evadir el ruido metálico transitorio */
     k_work_reschedule(&button_debounce_work, K_MSEC(30));                
 }
 
@@ -82,10 +95,10 @@ int main(void)
     gpio_pin_configure_dt(&user_led, GPIO_OUTPUT_INACTIVE);
     gpio_pin_configure_dt(&user_button, GPIO_INPUT);
 
-    /* Inicialización del hilo de trabajo asignado al filtro antirebote */
+    /* Inicialización del hilo de trabajo asignado al filtro antirebote de hardware */
     k_work_init_delayable(&button_debounce_work, button_debounce_handler);
 
-    /* Ajuste de la interrupción para que responda ante cualquier cambio eléctrico */
+    /* Ajuste de la interrupción para que responda ante flancos de subida y bajada */
     gpio_pin_interrupt_configure_dt(&user_button, GPIO_INT_EDGE_BOTH); 
     
     /* Vinculación del pin físico con la función de respuesta rápida de la interrupción */
@@ -94,8 +107,14 @@ int main(void)
     /* Activación oficial del canal de interrupción dentro del Kernel del sistema operativo */
     gpio_add_callback(user_button.port, &button_cb_data);
 
-    /* Inicialización de la máquina de estados pasando la dirección de nuestra instancia local */
-    if (!app_fsm_init(&banda_transportadora_fsm, &my_motor, &my_servo, &metal_sensor, &user_led)) {
+    /* INTEGRADO: Inicialización del decodificador abstracto del botón */
+    if (!button_api_init(&user_button_handler, &user_button, &user_led, on_button_event_received, &banda_transportadora_fsm)) {
+        LOG_ERR("Error fatal: No se pudo arrancar el manejador aislado del botón.");
+        return -EIO;
+    }
+
+    /* Inicialización de la máquina de estados pasando el puntero del botón como dependencia */
+    if (!app_fsm_init(&banda_transportadora_fsm, &my_motor, &my_servo, &metal_sensor, &user_led, &user_button_handler)) {
         LOG_ERR("Error fatal: No se pudo arrancar la lógica de control FSM.");
         return -EIO;
     }

@@ -1,37 +1,28 @@
 /**
  * @file app_fsm.c
  * @brief Implementación de la máquina de estados industrial basada en tablas y contexto aislado.
+ * @note Completamente desacoplado del driver físico y temporizaciones del botón de control.
  */
 
 #include "app_fsm.h"
+#include "button_api.h"  // Requerido para invocar el cambio de modo del botón en caliente
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
-/* Registro del módulo de logs para diagnóstico asíncrono en tiempo real */
 LOG_MODULE_REGISTER(app_fsm, LOG_LEVEL_INF);
 
-/* Espacio reservado en memoria RAM para la pila de ejecución exclusiva del hilo del motor */
 K_THREAD_STACK_DEFINE(motor_stack, STACK_SIZE);
 
-/* Definición del tipo puntero a función que estandariza los manejadores de estado */
 typedef void (*state_handler_t)(app_fsm_t *fsm, system_event_t event);
 
-/* --- Puntero de Contexto Privado del Módulo --- */
+/* Puntero de Contexto Privado para uso exclusivo de la interrupción del sensor */
 static app_fsm_t *p_fsm_context = NULL;
 
-/* --- Prototipos de los Manejadores de Estado (Lógica Aislada) --- */
 static void handle_state_system_off(app_fsm_t *fsm, system_event_t event);
 static void handle_state_banda_running(app_fsm_t *fsm, system_event_t event);
 static void handle_state_metal_reject(app_fsm_t *fsm, system_event_t event);
 static void handle_state_emergency_stop(app_fsm_t *fsm, system_event_t event);
 
-/* Prototipo de la función de enlace del sensor inductivo */
-static void on_sensor_change(const LJ12A3_Sensor_t *sensor);
-
-/**
- * @brief Tabla global indexada de estados.
- * Asocia de forma directa cada estado numérico con su respectiva función lógica.
- */
 static const state_handler_t state_table[STATE_MAX_STATES] = {
     [STATE_SYSTEM_OFF]     = handle_state_system_off,
     [STATE_BANDA_RUNNING]  = handle_state_banda_running,
@@ -39,14 +30,11 @@ static const state_handler_t state_table[STATE_MAX_STATES] = {
     [STATE_EMERGENCY_STOP] = handle_state_emergency_stop,
 };
 
-/* --- Callbacks de Tareas Diferidas (Work Queues) y Periféricos --- */
+/* --- Callbacks de Tareas Diferidas (Work Queues) de la FSM --- */
 
 static void on_sensor_change(const LJ12A3_Sensor_t *sensor)
 {
-    /* Evitamos advertencias asociadas al puntero del controlador del sensor */
     ARG_UNUSED(sensor);
-
-    /* Si el contexto de la máquina de estados ha sido registrado correctamente, activamos su tarea */
     if (p_fsm_context != NULL) {
         k_work_submit(&p_fsm_context->sensor_work);
     }
@@ -54,7 +42,6 @@ static void on_sensor_change(const LJ12A3_Sensor_t *sensor)
 
 static void sensor_work_handler(struct k_work *work)
 {
-    /* Recuperación segura del contexto original de la estructura contenedora */
     app_fsm_t *fsm = CONTAINER_OF(work, app_fsm_t, sensor_work);
 
     if (sensor_metal_detected(fsm->sensor)) {
@@ -72,30 +59,6 @@ static void servo_hold_timeout(struct k_work *work)
     app_fsm_dispatch(fsm, EVENT_TIMEOUT);
 }
 
-static void button_window_timeout(struct k_work *work)
-{
-    struct k_work_delayable *dwork = k_work_delayable_from_work(work);
-    app_fsm_t *fsm = CONTAINER_OF(dwork, app_fsm_t, button_window_work);
-
-    gpio_pin_set_dt(fsm->user_led, 0);
-   
-    /* Evaluación protegida del contador de clics empleando la API atómica */
-    if (atomic_get(&fsm->click_count) == 1) {
-        app_fsm_dispatch(fsm, EVENT_CLICK_INCREMENT);
-    }
-    atomic_set(&fsm->click_count, 0);
-}
-
-static void emergency_hold_timeout(struct k_work *work)
-{
-    struct k_work_delayable *dwork = k_work_delayable_from_work(work);
-    app_fsm_t *fsm = CONTAINER_OF(dwork, app_fsm_t, emergency_work);
-
-    k_work_cancel_delayable(&fsm->button_window_work);
-    atomic_set(&fsm->click_count, 0);
-    app_fsm_dispatch(fsm, EVENT_EMERGENCY);
-}
-
 static void emergency_led_blink_handler(struct k_work *work)
 {
     struct k_work_delayable *dwork = k_work_delayable_from_work(work);
@@ -109,54 +72,6 @@ static void emergency_led_blink_handler(struct k_work *work)
     }
 }
 
-/* --- Filtrado Temporal y Lógica de Entrada Digital --- */
-
-void app_fsm_notify_button_state(app_fsm_t *fsm, bool is_pressed)
-{
-    uint32_t current_time = k_uptime_get_32();
-
-    /* Bloqueo temporal por software para descarte de señales espurias rápidas */
-    if ((current_time - fsm->last_valid_time) < BUTTON_DEBOUNCE_MS) {
-        return;
-    }
-    fsm->last_valid_time = current_time;
-
-    if (is_pressed) {
-        /* CORRECCIÓN CRÍTICA: Si el sistema está en parada de emergencia, 
-           el botón actúa exclusivamente como desbloqueo. Consumimos el evento 
-           y salimos inmediatamente para evitar falsos incrementos colaterales. */
-        if (fsm->current_state == STATE_EMERGENCY_STOP) {
-            app_fsm_dispatch(fsm, EVENT_BUTTON_PRESSED);
-            return;
-        }
-
-        app_fsm_dispatch(fsm, EVENT_BUTTON_PRESSED);
-        k_work_reschedule(&fsm->emergency_work, K_MSEC(BUTTON_EMERGENCY_HOLD_MS));
-        
-        /* Incremento seguro en entornos de ejecución concurrentes */
-        atomic_inc(&fsm->click_count);
-       
-        if (atomic_get(&fsm->click_count) == 1) {
-            if (fsm->current_state != STATE_EMERGENCY_STOP) {
-                gpio_pin_set_dt(fsm->user_led, 1);
-            }
-            k_work_reschedule(&fsm->button_window_work, K_MSEC(BUTTON_WINDOW_MS));
-        }
-        else if (atomic_get(&fsm->click_count) == 2) {
-            k_work_cancel_delayable(&fsm->button_window_work);
-            k_work_cancel_delayable(&fsm->emergency_work);
-           
-            if (fsm->current_state != STATE_EMERGENCY_STOP) {
-                gpio_pin_set_dt(fsm->user_led, 0);
-            }
-            app_fsm_dispatch(fsm, EVENT_CLICK_DECREMENT);
-            atomic_set(&fsm->click_count, 0);
-        }
-    } else {
-        k_work_cancel_delayable(&fsm->emergency_work);
-    }
-}
-
 /* --- Hilo de Control y Gestión del Motor (Puente H) --- */
 
 static void motor_manager_thread(void *p1, void *p2, void *p3)
@@ -166,7 +81,6 @@ static void motor_manager_thread(void *p1, void *p2, void *p3)
     app_fsm_t *fsm = (app_fsm_t *)p1;
 
     while (1) {
-        /* Suspensión eficiente del hilo hasta recibir una orden de actualización */
         k_sem_take(&fsm->sem_motor_update, K_FOREVER);
 
         if (fsm->motor_speed != last_speed) {
@@ -174,7 +88,7 @@ static void motor_manager_thread(void *p1, void *p2, void *p3)
                 l298h_stop(fsm->motor);
                 LOG_INF("Motor de la banda detenido de forma segura.");
             } else {
-                l298h_set_direction(fsm->motor, L298H_DIR_FORWARD);
+                l298h_set_direction(fsm->motor, MOTOR_DIR);
                 l298h_set_speed(fsm->motor, fsm->motor_speed);
                 LOG_INF("Velocidad de la banda actualizada al %d%%.", fsm->motor_speed);
             }
@@ -186,41 +100,34 @@ static void motor_manager_thread(void *p1, void *p2, void *p3)
 /* --- Inicialización del Módulo --- */
 
 bool app_fsm_init(app_fsm_t *fsm, const L298H_Motor_t *motor, const SG90_Servo_t *servo,
-                  const LJ12A3_Sensor_t *sensor, const struct gpio_dt_spec *led)
+                  const LJ12A3_Sensor_t *sensor, const struct gpio_dt_spec *led, struct button_handler *button)
 {
-    if (!fsm || !motor || !servo || !sensor || !led) {
+    if (!fsm || !motor || !servo || !sensor || !led || !button) {
         return false;
     }
 
-    /* Guardamos de forma segura el contexto de la máquina para uso de la interrupción del sensor */
     p_fsm_context = fsm;
 
     fsm->motor = motor;
     fsm->servo = servo;
     fsm->sensor = sensor;
     fsm->user_led = led;
+    fsm->button = button; // Vinculación del objeto periférico
     fsm->current_state = STATE_SYSTEM_OFF;
     fsm->motor_speed = MOTOR_MIN_SPEED_PERCENT;
-    fsm->last_valid_time = 0;
 
     if (!l298h_init(fsm->motor) || !servo_init(fsm->servo)) {
         LOG_ERR("Fallo crítico al inicializar los actuadores físicos del sistema.");
         return false;
     }
 
-    /* Forzado físico inicial a una posición conocida de seguridad */
     servo_set_angle(fsm->servo, 0); 
     l298h_stop(fsm->motor);        
 
-    /* Inicialización de primitivas de sincronización del Kernel de Zephyr */
     k_sem_init(&fsm->sem_motor_update, 0, 1);
-    atomic_set(&fsm->click_count, 0);
 
-    /* Vinculación de los hilos de trabajo asíncronos con el contexto del objeto */
     k_work_init(&fsm->sensor_work, sensor_work_handler);
     k_work_init_delayable(&fsm->servo_hold_work, servo_hold_timeout);
-    k_work_init_delayable(&fsm->button_window_work, button_window_timeout);
-    k_work_init_delayable(&fsm->emergency_work, emergency_hold_timeout);
     k_work_init_delayable(&fsm->emergency_led_work, emergency_led_blink_handler);
 
     if (!sensor_init(fsm->sensor, on_sensor_change)) {
@@ -228,7 +135,6 @@ bool app_fsm_init(app_fsm_t *fsm, const L298H_Motor_t *motor, const SG90_Servo_t
         return false;
     }
 
-    /* Creación dinámica y arranque del hilo de ejecución del motor */
     k_thread_create(&fsm->motor_thread_data, motor_stack, K_THREAD_STACK_SIZEOF(motor_stack),
                     motor_manager_thread, (void *)fsm, NULL, NULL,
                     K_PRIO_COOP(5), 0, K_NO_WAIT);
@@ -241,7 +147,6 @@ bool app_fsm_init(app_fsm_t *fsm, const L298H_Motor_t *motor, const SG90_Servo_t
 
 void app_fsm_dispatch(app_fsm_t *fsm, system_event_t event)
 {
-    /* Compuerta de exclusión mutua de seguridad para el estado apagado */
     if (fsm->current_state == STATE_SYSTEM_OFF) {
         servo_set_angle(fsm->servo, SERVO_BASE_ANGLE);
         if (event == EVENT_METAL_DETECTED || event == EVENT_METAL_CLEARED || event == EVENT_TIMEOUT) {
@@ -251,18 +156,21 @@ void app_fsm_dispatch(app_fsm_t *fsm, system_event_t event)
 
     /* Intercepción prioritaria global para el evento de parada de emergencia */
     if (event == EVENT_EMERGENCY) {
-        LOG_ERR("[ALERTA INDUSTRIAL] Parada de emergencia solicitada.");
+        LOG_ERR("[ALERTA] Parada de emergencia solicitada.");
         fsm->motor_speed = 0;
         l298h_stop(fsm->motor);
         servo_set_angle(fsm->servo, 0);
         k_sem_reset(&fsm->sem_motor_update);
         k_work_cancel_delayable(&fsm->servo_hold_work);
+        
+        /* Ponemos inmediatamente el botón en modo rápido de flanco para permitir el desbloqueo */
+        button_api_set_immediate_mode(fsm->button, true);
+        
         k_work_reschedule(&fsm->emergency_led_work, K_MSEC(EMERGENCY_BLINK_MS));
         fsm->current_state = STATE_EMERGENCY_STOP;
         return;
     }
 
-    /* Redireccionamiento inmediato utilizando la tabla indexada O(1) */
     if (fsm->current_state < STATE_MAX_STATES && state_table[fsm->current_state] != NULL) {
         state_table[fsm->current_state](fsm, event);
     }
@@ -306,7 +214,7 @@ static void handle_state_banda_running(app_fsm_t *fsm, system_event_t event)
         }
     }
     else if (event == EVENT_METAL_DETECTED) {
-        LOG_WRN("[DETECCIÓN] Elemento metálico localizado en la línea.");
+        LOG_WRN("[DETECCIÓN] Elemento metálico localizado en la Banda.");
         servo_set_angle(fsm->servo, SERVO_DETECTION_ANGLE);
         k_work_schedule(&fsm->servo_hold_work, K_MSEC(SERVO_DETECTION_HOLD_MS));
         fsm->current_state = STATE_METAL_REJECT;
@@ -334,27 +242,18 @@ static void handle_state_metal_reject(app_fsm_t *fsm, system_event_t event)
         k_sem_give(&fsm->sem_motor_update);
     }
     else if (event == EVENT_CLICK_DECREMENT) {
-        /* 1. Modificar el valor del porcentaje de velocidad */
         if (fsm->motor_speed >= MOTOR_MIN_SPEED_PERCENT + MOTOR_SPEED_STEP) {
             fsm->motor_speed -= MOTOR_SPEED_STEP;
         } else {
             fsm->motor_speed = MOTOR_MIN_SPEED_PERCENT;
         }
         
-        /* 2. Despertar al hilo del motor de forma asíncrona para que aplique los 0V (60%) */
         k_sem_give(&fsm->sem_motor_update);
 
-        /* 3. CORRECCIÓN CRÍTICA: Evaluar si caímos al límite seguro de apagado */
         if (fsm->motor_speed <= MOTOR_MIN_SPEED_PERCENT) {
             LOG_INF("Banda al mínimo operativo. Pasando a estado de apagado.");
-            
-            /* Cancelamos inmediatamente el temporizador del kernel de la eyección en curso */
             k_work_cancel_delayable(&fsm->servo_hold_work); 
-            
-            /* Forzamos el brazo del servomotor a replegarse a 0 grados por seguridad */
             servo_set_angle(fsm->servo, 0); 
-            
-            /* Cambiamos oficialmente el estado de la FSM a Apagado */
             fsm->current_state = STATE_SYSTEM_OFF;
         }
     }
@@ -362,11 +261,13 @@ static void handle_state_metal_reject(app_fsm_t *fsm, system_event_t event)
 
 static void handle_state_emergency_stop(app_fsm_t *fsm, system_event_t event)
 {
+    /* El evento inmediato del flanco nos despierta aquí al instante */
     if (event == EVENT_BUTTON_PRESSED) {
         LOG_INF("Reinicio del sistema posterior a parada de emergencia aceptado.");
         k_work_cancel_delayable(&fsm->emergency_led_work); 
-        k_work_cancel_delayable(&fsm->button_window_work); 
-        atomic_set(&fsm->click_count, 0); 
+        
+        /* Apagamos el modo inmediato para recuperar la decodificación de clics múltiples */
+        button_api_set_immediate_mode(fsm->button, false);
            
         gpio_pin_set_dt(fsm->user_led, 0); 
         fsm->motor_speed = MOTOR_MIN_SPEED_PERCENT;
