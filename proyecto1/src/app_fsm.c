@@ -122,6 +122,14 @@ void app_fsm_notify_button_state(app_fsm_t *fsm, bool is_pressed)
     fsm->last_valid_time = current_time;
 
     if (is_pressed) {
+        /* CORRECCIÓN CRÍTICA: Si el sistema está en parada de emergencia, 
+           el botón actúa exclusivamente como desbloqueo. Consumimos el evento 
+           y salimos inmediatamente para evitar falsos incrementos colaterales. */
+        if (fsm->current_state == STATE_EMERGENCY_STOP) {
+            app_fsm_dispatch(fsm, EVENT_BUTTON_PRESSED);
+            return;
+        }
+
         app_fsm_dispatch(fsm, EVENT_BUTTON_PRESSED);
         k_work_reschedule(&fsm->emergency_work, K_MSEC(BUTTON_EMERGENCY_HOLD_MS));
         
@@ -317,16 +325,38 @@ static void handle_state_metal_reject(app_fsm_t *fsm, system_event_t event)
             fsm->current_state = STATE_BANDA_RUNNING;
         }
     }
+    else if (event == EVENT_CLICK_INCREMENT) {
+        if (fsm->motor_speed + MOTOR_SPEED_STEP <= MOTOR_MAX_SPEED_PERCENT) {
+            fsm->motor_speed += MOTOR_SPEED_STEP;
+        } else {
+            fsm->motor_speed = MOTOR_MAX_SPEED_PERCENT;
+        }
+        k_sem_give(&fsm->sem_motor_update);
+    }
     else if (event == EVENT_CLICK_DECREMENT) {
+        /* 1. Modificar el valor del porcentaje de velocidad */
         if (fsm->motor_speed >= MOTOR_MIN_SPEED_PERCENT + MOTOR_SPEED_STEP) {
             fsm->motor_speed -= MOTOR_SPEED_STEP;
         } else {
             fsm->motor_speed = MOTOR_MIN_SPEED_PERCENT;
-            servo_set_angle(fsm->servo, SERVO_BASE_ANGLE);
+        }
+        
+        /* 2. Despertar al hilo del motor de forma asíncrona para que aplique los 0V (60%) */
+        k_sem_give(&fsm->sem_motor_update);
+
+        /* 3. CORRECCIÓN CRÍTICA: Evaluar si caímos al límite seguro de apagado */
+        if (fsm->motor_speed <= MOTOR_MIN_SPEED_PERCENT) {
+            LOG_INF("Banda al mínimo operativo. Pasando a estado de apagado.");
+            
+            /* Cancelamos inmediatamente el temporizador del kernel de la eyección en curso */
             k_work_cancel_delayable(&fsm->servo_hold_work); 
+            
+            /* Forzamos el brazo del servomotor a replegarse a 0 grados por seguridad */
+            servo_set_angle(fsm->servo, 0); 
+            
+            /* Cambiamos oficialmente el estado de la FSM a Apagado */
             fsm->current_state = STATE_SYSTEM_OFF;
         }
-        k_sem_give(&fsm->sem_motor_update);
     }
 }
 

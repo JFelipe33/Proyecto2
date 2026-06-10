@@ -65,9 +65,7 @@
 \section{Proyecto / Problema / Sistema}
 \label{sec:proyecto_problema_sistema}
 
-El sistema recibe información desde un sensor inductivo encargado de detectar piezas metálicas y desde un botón de usuario configurado para identificar múltiples pulsaciones o presiones prolongadas. Estos datos son procesados por una máquina de estados optimizada mediante tablas indexadas que se ejecuta de forma asíncrona sobre un sistema operativo en tiempo real, generando una respuesta observable en el motor de tracción de la banda, la posición angular de un servomotor de desvío y un indicador LED de estado. Toda la actividad interna es reportada bajo un esquema no bloqueante hacia una consola de diagnóstico.
-
-El prototipo interactúa directamente con su entorno físico al identificar materiales ferrosos sobre la cinta transportadora en movimiento y sin necesidad de contacto directo. Al ocurrir una detección, el brazo deflector altera la trayectoria del objeto para retirarlo de la línea antes de regresar a su posición inicial de reposo. Asimismo, el operador puede intervenir en la marcha del sistema mediante el botón de control para encender la banda, cambiar su velocidad de manera inmediata, apagarla o activar una detención de emergencia total si es necesario. Todo el comportamiento del problema se define bajo un enfoque puramente funcional y de control con el entorno, prescindiendo del uso de nombres de pines, líneas de código o librerías de software específicas en esta sección introductoria.
+El presente proyecto aborda el diseño de un sistema electrónico dedicado a la automatización industrial para la clasificación y descarte de objetos en una línea de producción, solucionando la necesidad de regular el movimiento de una cinta transportadora y desviar de forma automatizada las piezas con propiedades metálicas mediante un mecanismo mecánico de expulsión. Esta solución es altamente relevante como sistema embebido debido a su entorno de ejecución concurrentemente rápido, donde se deben atender eventos críticos del entorno (como la detección de materiales o solicitudes de parada segura) en fracciones de segundo sin degradar el control general ni la supervisión continua del operador. Funcionalmente, el sistema propuesto recibe información desde un sensor de presencia de metales y un botón de control de usuario, procesa esta información mediante una lógica de control centralizada encargada de coordinar secuencialmente los modos de funcionamiento, las temporizaciones de rechazo y los protocolos de emergencia, y genera una salida observable en un motor de arrastre para modificar la velocidad de la cinta, un actuador de posicionamiento para mover el brazo deflector, un indicador luminoso para la señalización visual de alertas y una interfaz de comunicación para la transmisión externa de datos de diagnóstico; logrando de esta manera una interacción directa con el entorno físico de forma electromagnética para el reconocimiento de materiales y de forma mecánica para alterar la trayectoria de las piezas en pleno desplazamiento.
 
 \clearpage
 
@@ -213,16 +211,23 @@ Los eventos definidos en el firmware controlan las transiciones de la máquina d
 En esta sección se presenta la Máquina de Estados Finita (FSM) que reacciona de manera inmediata a los eventos del usuario.
 
 \begin{figure}[H]
-    \centering
-    \includegraphics[width=1\textwidth]{maquina.png}
+    \centering    \includegraphics[width=1\textwidth]{maquina.png}
     \caption{Diagrama de la máquina de estados finita (FSM)}
+    \label{fig:maquina_estados}
+\end{figure}
+
+\section{Diagrama de bloques de la arquitectura funcional del sistema y flujo de datos.}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{siste.png}
     \label{fig:maquina_estados}
 \end{figure}
 
 \section{Hardware y Materiales Disponibles}
 \label{sec:hardware_materiales}
 
-A continuación se presenta el inventory consolidado de los componentes utilizados en la implementación del prototipo:
+A continuación se presenta los componentes utilizados en la implementación del prototipo:
 
 \vspace{0.3cm}
 

@@ -13,7 +13,7 @@ stateDiagram-v2
     
     state STATE_BANDA_RUNNING {
         [*] --> Banda_Moviendose
-        Banda_Moviendose --> Banda_Moviendose : EVENT_CLICK_INCREMENT / Aumentar velocidad (+10%)\nEVENT_CLICK_DECREMENT / Disminuir velocidad (-10%)
+        Banda_Moviendose --> Banda_Moviendose : EVENT_CLICK_INCREMENT / Aumentar velocidad (+10%) EVENT_CLICK_DECREMENT / Disminuir velocidad (-10%)
     }
 
     STATE_BANDA_RUNNING --> STATE_METAL_REJECT : EVENT_METAL_DETECTED / Servo a 60°, Iniciar Timer (4s)
@@ -41,7 +41,11 @@ stateDiagram-v2
         si el botón físico se sostiene continuamente por un tiempo >= 2.0 segundos.
     end note
     note right of STATE_BANDA_RUNNING
-        Los eventos de incremento y decremento operan bajo protección atómica,
-        garantizando un conteo de pulsaciones libre de condiciones de carrera.
+        El evento EVENT_CLICK_DECREMENT 
+        solo se dispara si el botón físico se presiona 2 veces consecutivas con un intervalo <= 2.0 segundos.
+    end note
+    note right of STATE_BANDA_RUNNING
+        El evento EVENT_CLICK_INCREMENT 
+        solo se dispara si el botón físico se presiona 1 vez y pasan 2.0 segundos sin que se presione nuevamente. 
     end note
 ```
