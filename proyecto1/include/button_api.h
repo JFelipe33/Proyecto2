@@ -12,12 +12,9 @@
 #include <zephyr/sys/atomic.h>
 
 /* Tiempos de operación tomados de la especificación de la planta */
-#define BUTTON_WINDOW_MS             1000U 
+#define BUTTON_WINDOW_MS             1500U 
 #define BUTTON_DEBOUNCE_MS           10U   
-#define BUTTON_EMERGENCY_HOLD_MS     1000U 
-
-/* Forward declaration para evitar dependencias circulares de cabeceras */
-typedef enum system_event_t system_event_t;
+#define BUTTON_EMERGENCY_HOLD_MS     1500U 
 
 /**
  * @brief Definición del Callback que usará el módulo para notificar eventos abstractos.

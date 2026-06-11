@@ -18,7 +18,7 @@ struct button_handler;
 
 /* --- Constantes de Operación de la Planta Industrial --- */
 #define STACK_SIZE                   1024U
-#define MOTOR_DIR                    L298H_DIR_REVERSE  // Dirección de avance para la banda transportadora 
+#define MOTOR_DIR                    L298H_DIR_FORWARD  // Dirección de avance para la banda transportadora 
 #define MOTOR_MAX_SPEED_PERCENT      100U 
 #define MOTOR_MIN_SPEED_PERCENT      0U    // Respetando el mapeo 0-100% virtual
 #define MOTOR_SPEED_STEP             25U   // Pasos escalados del 25%

@@ -12,69 +12,82 @@ graph LR
 
     %% 1. ENTRADAS Y ESTÍMULOS
     subgraph S1 [1. Entorno]
-        A[Operador]:::entorno
+        A[Usuario]:::entorno
         B[Objeto en Banda]:::entorno
     end
 
     %% 2. PERIFÉRICOS DE ENTRADA
     subgraph S2 [2. Hardware In]
-        C[Botón <br> Pin PC13]:::hw_in
-        D[Sensor <br> Pin PA1]:::hw_in
+        C[Botón]:::hw_in
+        D[Sensor]:::hw_in
     end
 
     %% 3. KERNEL Y PROCESAMIENTO
     subgraph S3 [3. Ecosistema Zephyr RTOS / Software]
-        E[ISR Botón <br> + Antirebote]:::kernel
-        F[ISR Sensor <br> Flanco]:::kernel
+        E[ISR Botón <br> + Filtro Debounce]:::kernel
+        F[ISR Sensor <br> Flanco de Bajada]:::kernel
         
-        G[Cola de Trabajo <br> button_window]:::kernel
-        H[Cola de Trabajo <br> sensor_work]:::kernel
+        G["Módulo button_api.c <br> Cuentas Atómicas <br> Ventanas de 1.5s"]:::kernel
+        H["Módulo lj12a3_api.c <br> Tarea sensor_work"]:::kernel
         
         I[Máquina de Estados <br> app_fsm.c]:::fsm
-        
         L[Timer Kernel <br> servo_hold 4s]:::fsm
+        
+        S[Driver sg90_api.c <br> Control Angular PWM]:::kernel
+        T[Control de LED <br> Parpadeo y Alertas GPIO]:::kernel
+        U[Subsistema de Logging <br> Modo diferido]:::kernel
+        
         J[Semáforo <br> motor_update]:::kernel
         K[Hilo Motor <br> manager_thread]:::kernel
+        R["Driver l298h_api.c <br> Control de velocidad"]:::kernel
     end
 
     %% 4. ACTUADORES Y SALIDAS
     subgraph S4 [4. Hardware Out]
-        M[Puente H <br> L298N]:::hw_out
-        N[Motor DC <br> Cinta]:::hw_out
         O[Servomotor <br> SG90]:::hw_out
         P[LED Alerta <br> Pin PA5]:::hw_out
+        M[Puente H <br> L298N]:::hw_out
+        N[Motor DC <br> Cinta]:::hw_out
         Q[Consola <br> UART Logs]:::hw_out
     end
 
-    %% Estilo para los contenedores (Subgraphs): Fondo blanco, bordes negros y texto negro
+    %% Estilo para los contenedores (Subgraphs)
     style S1 fill:#ffffff,stroke:#000000,stroke-width:1.5px,color:#000000;
     style S2 fill:#ffffff,stroke:#000000,stroke-width:1.5px,color:#000000;
     style S3 fill:#ffffff,stroke:#000000,stroke-width:1.5px,color:#000000;
     style S4 fill:#ffffff,stroke:#000000,stroke-width:1.5px,color:#000000;
 
-    %% FLUJO PRINCIPAL DE IZQUIERDA A DERECHA
+    %% CARRIL 1: Procesamiento de Usuario (Botón)
     A --> C
-    B --> D
-    
     C --> E
-    D --> F
-    
     E --> G
-    F --> H
-    
     G --> I
+    I -.-> G
+
+    %% CARRIL 2: Procesamiento de Planta (Sensor)
+    B --> D
+    D --> F
+    F --> H
     H --> I
-    
-    %% Lógica interna de la FSM
-    I -->|Agenda 4.0s| L
-    L -->|Timeout| I
-    I -->|k_sem_give| J
+    I --> L
+    L --> I
+
+    %% CARRIL 3: Subsistema del Servomotor
+    I --> S
+    S --> O
+
+    %% CARRIL 4: Subsistema del LED Indicador
+    I --> T
+    T --> P
+
+    %% CARRIL 5: Subsistema de Potencia (Motor)
+    I --> J
     J --> K
-    
-    %% Conexiones directas a periféricos de salida
-    K --> M
+    K --> R
+    R --> M
     M --> N
-    I --> O
-    I --> P
-    I --> Q
+    
+    %% CARRIL 6: Subsistema de Diagnóstico (Logging)
+    I --> U
+    U --> Q
 ```
